@@ -4,7 +4,9 @@ import { owner, viewer } from "../fixtures/auth";
 import { openAccountMenu } from "./helpers/sidebar";
 import {
   API_URL,
+  createCollection,
   createDrawing,
+  deleteCollection,
   deleteDrawing,
   getCsrfHeaders,
   getDrawing,
@@ -329,5 +331,85 @@ test("opening an image through a view-only link never attempts to save or upload
     ).toHaveCount(0);
   } finally {
     await deleteDrawing(request, drawing.id);
+  }
+});
+
+test("an admin builds a team, and its members reach the team's collection until they leave it", async ({
+  page,
+  browser,
+  baseURL,
+  request,
+}) => {
+  await apiSignIn(request);
+  const teamName = `E2E Team ${Date.now()}`;
+  const collection = await createCollection(request, `${teamName} board`);
+  const drawing = await createDrawing(request, {
+    name: `${teamName} drawing`,
+    collectionId: collection.id,
+  });
+  let teamId: string | null = null;
+  // A second browser for the team member; contexts created by hand do not
+  // inherit the configured base URL.
+  const viewerContext = await browser.newContext({ baseURL });
+  try {
+    await signIn(page);
+    await openAccountMenu(page);
+    await page.getByRole("button", { name: "Teams", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Teams" })).toBeVisible();
+
+    await page.getByRole("button", { name: "New team", exact: true }).click();
+    await page
+      .getByRole("textbox", { name: "Name", exact: true })
+      .fill(teamName);
+    const created = page.waitForResponse(
+      (r) => r.url().endsWith("/teams") && r.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    teamId = ((await (await created).json()) as { team: { id: string } }).team
+      .id;
+
+    await page.getByLabel("Add people to the team").fill("e2e-viewer");
+    await page.getByRole("button", { name: "Add E2E Viewer" }).click();
+    const card = page.getByRole("region", { name: `Team ${teamName}` });
+    await expect(card.getByText(viewer.email)).toBeVisible();
+    await expect(card.getByText("1 member", { exact: true })).toBeVisible();
+
+    const share = await request.post(
+      `${API_URL}/collections/${collection.id}/team-shares`,
+      {
+        headers: await getCsrfHeaders(request),
+        data: { teamId, role: "view" },
+      },
+    );
+    expect(share.ok()).toBe(true);
+
+    const viewerPage = await viewerContext.newPage();
+    await signIn(viewerPage, viewer);
+    await expect(
+      viewerPage.getByRole("button", { name: new RegExp(collection.name) }),
+    ).toBeVisible();
+    expect((await getDrawing(viewerPage.request, drawing.id)).name).toBe(
+      drawing.name,
+    );
+
+    const removed = await request.delete(
+      `${API_URL}/teams/${teamId}/members/${viewer.id}`,
+      { headers: await getCsrfHeaders(request) },
+    );
+    expect(removed.ok()).toBe(true);
+    expect(
+      (
+        await viewerPage.request.get(`${API_URL}/drawings/${drawing.id}`)
+      ).status(),
+    ).toBe(404);
+  } finally {
+    await viewerContext.close();
+    if (teamId) {
+      await request.delete(`${API_URL}/teams/${teamId}`, {
+        headers: await getCsrfHeaders(request),
+      });
+    }
+    await deleteDrawing(request, drawing.id);
+    await deleteCollection(request, collection.id);
   }
 });

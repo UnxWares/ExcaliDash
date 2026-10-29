@@ -28,6 +28,9 @@ const Profile = lazy(() =>
 const Admin = lazy(() =>
   import("./pages/Admin").then((m) => ({ default: m.Admin })),
 );
+const Teams = lazy(() =>
+  import("./pages/Teams").then((m) => ({ default: m.Teams })),
+);
 const Login = lazy(() =>
   import("./pages/Login").then((m) => ({ default: m.Login })),
 );
@@ -106,6 +109,14 @@ function App() {
                       element={
                         <ProtectedRoute>
                           <Profile />
+                        </ProtectedRoute>
+                      }
+                    />
+                    <Route
+                      path="/teams"
+                      element={
+                        <ProtectedRoute>
+                          <Teams />
                         </ProtectedRoute>
                       }
                     />

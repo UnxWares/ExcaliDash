@@ -5,6 +5,8 @@ import type {
   CollectionShareRow,
   CollectionShareRole,
   CollectionShareUser,
+  CollectionTeamShareRow,
+  TeamSummary,
 } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { RoleSelect } from "./RoleSelect";
@@ -27,17 +29,23 @@ export const ShareCollectionModal: React.FC<Props> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shares, setShares] = useState<CollectionShareRow[]>([]);
+  const [teamShares, setTeamShares] = useState<CollectionTeamShareRow[]>([]);
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CollectionShareUser[]>([]);
+  const [teamResults, setTeamResults] = useState<TeamSummary[]>([]);
   const [addRole, setAddRole] = useState<CollectionShareRole>("view");
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await api.getCollectionShares(collectionId);
+      const [data, teamData] = await Promise.all([
+        api.getCollectionShares(collectionId),
+        api.getCollectionTeamShares(collectionId),
+      ]);
       setShares(data.shares);
+      setTeamShares(teamData.shares);
     } catch (err: unknown) {
       let msg = "Failed to load sharing settings";
       if (api.isAxiosError(err)) {
@@ -54,26 +62,37 @@ export const ShareCollectionModal: React.FC<Props> = ({
     if (!isOpen) return;
     setQuery("");
     setResults([]);
+    setTeamResults([]);
     setAddRole("view");
     setError(null);
     void refresh();
   }, [isOpen, refresh]);
 
-  // Debounced user search
+  // Debounced search for people and teams
   useEffect(() => {
     if (!isOpen) return;
     const q = query.trim();
     if (q.length < 2) {
       setResults([]);
+      setTeamResults([]);
       return;
     }
     let cancelled = false;
     const t = window.setTimeout(async () => {
       try {
-        const users = await api.resolveCollectionShareUsers(collectionId, q);
-        if (!cancelled) setResults(users);
+        const { users, teams } = await api.resolveCollectionShareCandidates(
+          collectionId,
+          q,
+        );
+        if (!cancelled) {
+          setResults(users);
+          setTeamResults(teams);
+        }
       } catch {
-        if (!cancelled) setResults([]);
+        if (!cancelled) {
+          setResults([]);
+          setTeamResults([]);
+        }
       }
     }, 250);
     return () => {
@@ -90,6 +109,7 @@ export const ShareCollectionModal: React.FC<Props> = ({
       await refresh();
       setQuery("");
       setResults([]);
+      setTeamResults([]);
     } catch (err: unknown) {
       let msg = "Failed to share with user";
       if (api.isAxiosError(err)) {
@@ -136,6 +156,55 @@ export const ShareCollectionModal: React.FC<Props> = ({
     }
   };
 
+  const handleTeamShare = async (
+    teamId: string,
+    role: CollectionShareRole,
+    fallbackMessage: string,
+  ) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      await api.upsertCollectionTeamShare(collectionId, teamId, role);
+      await refresh();
+      setQuery("");
+      setResults([]);
+      setTeamResults([]);
+    } catch (err: unknown) {
+      let msg = fallbackMessage;
+      if (api.isAxiosError(err)) {
+        const s = err.response?.data?.message ?? err.response?.data?.error;
+        if (typeof s === "string") msg = s;
+      }
+      setError(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleTeamRoleChange = async (teamId: string, val: string) => {
+    if (val !== "remove") {
+      await handleTeamShare(
+        teamId,
+        val as CollectionShareRole,
+        "Failed to update role",
+      );
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      await api.removeCollectionTeamShare(collectionId, teamId);
+      await refresh();
+    } catch {
+      setError("Failed to remove team");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const memberCountLabel = (count: number) =>
+    `${count} ${count === 1 ? "member" : "members"}`;
+
   if (!isOpen) return null;
 
   return (
@@ -181,7 +250,7 @@ export const ShareCollectionModal: React.FC<Props> = ({
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Add people by name or email"
+                  placeholder="Add people or teams by name or email"
                   className="w-full pl-10 pr-4 py-2 rounded-xl border-2 border-slate-800 dark:border-neutral-700 bg-slate-50 dark:bg-neutral-800 text-slate-900 dark:text-neutral-100 focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 transition-all text-sm font-semibold placeholder:text-slate-400 shadow-[1.5px_1.5px_0px_0px_rgba(30,41,59,0.9)] dark:shadow-[1.5px_1.5px_0px_0px_rgba(255,255,255,0.18)]"
                 />
               </div>
@@ -194,8 +263,38 @@ export const ShareCollectionModal: React.FC<Props> = ({
               </div>
             </div>
 
-            {results.length > 0 && (
+            {(results.length > 0 || teamResults.length > 0) && (
               <div className="absolute top-full left-0 right-0 mt-2 border-2 border-slate-800 dark:border-neutral-700 rounded-xl bg-white dark:bg-neutral-900 shadow-[3px_3px_0px_0px_rgba(30,41,59,0.9)] dark:shadow-[3px_3px_0px_0px_rgba(255,255,255,0.18)] overflow-hidden z-[200] animate-in fade-in slide-in-from-top-2">
+                {teamResults.map((team) => (
+                  <button
+                    key={`team-${team.id}`}
+                    onClick={() =>
+                      handleTeamShare(
+                        team.id,
+                        addRole,
+                        "Failed to share with team",
+                      )
+                    }
+                    className="ui-menu-item gap-3 border-b border-slate-100 px-4 py-2.5 last:border-b-0 dark:border-neutral-800"
+                  >
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300">
+                      <Users size={14} strokeWidth={2.5} />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-slate-900 dark:text-neutral-100 truncate">
+                        {team.name}
+                      </div>
+                      <div className="text-[10px] font-semibold text-slate-500 dark:text-neutral-400 truncate">
+                        Team · {memberCountLabel(team.memberCount)}
+                      </div>
+                    </div>
+                    <Plus
+                      size={16}
+                      className="text-slate-400 group-hover:text-indigo-600 transition-colors"
+                      strokeWidth={2}
+                    />
+                  </button>
+                ))}
                 {results.map((u) => (
                   <button
                     key={u.id}
@@ -248,7 +347,7 @@ export const ShareCollectionModal: React.FC<Props> = ({
                 </div>
               </div>
 
-              {shares.length === 0 && (
+              {shares.length === 0 && teamShares.length === 0 && (
                 <div className="flex flex-col items-center gap-2 py-6 text-slate-400 dark:text-neutral-500">
                   <Users size={28} strokeWidth={1.5} />
                   <p className="text-xs font-bold">
@@ -275,6 +374,40 @@ export const ShareCollectionModal: React.FC<Props> = ({
                     <RoleSelect
                       value={s.role}
                       onChange={(val) => handleRoleChange(s.granteeUserId, val)}
+                      extraOptions={[
+                        {
+                          label: "Remove access",
+                          value: "remove",
+                          danger: true,
+                        },
+                      ]}
+                    />
+                  </div>
+                </div>
+              ))}
+
+              {teamShares.map((share) => (
+                <div
+                  key={`team-${share.teamId}`}
+                  className="flex items-center gap-3 px-1 py-1.5 min-h-[48px] group"
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300">
+                    <Users size={14} strokeWidth={2.5} />
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-bold text-slate-900 dark:text-neutral-100 leading-tight truncate">
+                      {share.team.name}
+                    </div>
+                    <div className="text-[10px] font-semibold text-slate-500 dark:text-neutral-400 mt-0.5 truncate">
+                      Team · {memberCountLabel(share.team.memberCount)}
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    <RoleSelect
+                      value={share.role}
+                      onChange={(val) =>
+                        handleTeamRoleChange(share.teamId, val)
+                      }
                       extraOptions={[
                         {
                           label: "Remove access",

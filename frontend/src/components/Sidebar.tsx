@@ -232,6 +232,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       {/* Only show roles for collections shared with this user. */}
                       {collection.isOwner === false && (
                         <span
+                          title={
+                            collection.sharedViaTeams?.length
+                              ? `${t("sidebar.sharedThroughTeams")}: ${collection.sharedViaTeams
+                                  .map((team) => team.name)
+                                  .join(", ")}`
+                              : undefined
+                          }
                           className={clsx(
                             "shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold",
                             collection.sharedRole === "edit"

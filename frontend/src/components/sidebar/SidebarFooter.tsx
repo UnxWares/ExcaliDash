@@ -4,6 +4,7 @@ import {
   Settings as SettingsIcon,
   Trash2,
   User,
+  Users,
   LogOut,
   ChevronUp,
 } from "lucide-react";
@@ -146,6 +147,21 @@ export const SidebarFooter: React.FC<SidebarFooterProps> = ({
             <User size={18} />
             <span className="min-w-0 flex-1 text-left">
               {t("sidebar.profile")}
+            </span>
+          </button>
+        )}
+
+        {authEnabled === true && (
+          <button
+            onClick={() => selectPage("/teams")}
+            className={footerButtonClass(
+              selectedCollectionId === "TEAMS",
+              compact,
+            )}
+          >
+            <Users size={18} />
+            <span className="min-w-0 flex-1 text-left">
+              {t("sidebar.teams")}
             </span>
           </button>
         )}

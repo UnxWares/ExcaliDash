@@ -3,10 +3,17 @@ import type {
   CollectionShareRole,
   CollectionShareRow,
   CollectionShareUser,
+  CollectionTeamShareRow,
+  TeamSummary,
 } from "../types";
 import { api } from "./client";
 
-export type { CollectionShareRole, CollectionShareRow, CollectionShareUser };
+export type {
+  CollectionShareRole,
+  CollectionShareRow,
+  CollectionShareUser,
+  CollectionTeamShareRow,
+};
 
 export const getCollections = async () => {
   const response = await api.get<Collection[]>("/collections");
@@ -96,6 +103,49 @@ export const removeCollectionShare = async (
 ): Promise<{ success: true }> => {
   const response = await api.delete<{ success: true }>(
     `/collections/${collectionId}/shares/${userId}`,
+  );
+  return response.data;
+};
+
+// People and teams matching a search, for the collection share dialog.
+export const resolveCollectionShareCandidates = async (
+  collectionId: string,
+  q: string,
+): Promise<{ users: CollectionShareUser[]; teams: TeamSummary[] }> => {
+  const response = await api.get<{
+    users: CollectionShareUser[];
+    teams?: TeamSummary[];
+  }>(`/collections/${collectionId}/share-resolve`, { params: { q } });
+  return { users: response.data.users, teams: response.data.teams ?? [] };
+};
+
+export const getCollectionTeamShares = async (
+  collectionId: string,
+): Promise<{ shares: CollectionTeamShareRow[] }> => {
+  const response = await api.get<{ shares: CollectionTeamShareRow[] }>(
+    `/collections/${collectionId}/team-shares`,
+  );
+  return response.data;
+};
+
+export const upsertCollectionTeamShare = async (
+  collectionId: string,
+  teamId: string,
+  role: CollectionShareRole,
+): Promise<{ share: CollectionTeamShareRow }> => {
+  const response = await api.post<{ share: CollectionTeamShareRow }>(
+    `/collections/${collectionId}/team-shares`,
+    { teamId, role },
+  );
+  return response.data;
+};
+
+export const removeCollectionTeamShare = async (
+  collectionId: string,
+  teamId: string,
+): Promise<{ success: true }> => {
+  const response = await api.delete<{ success: true }>(
+    `/collections/${collectionId}/team-shares/${teamId}`,
   );
   return response.data;
 };

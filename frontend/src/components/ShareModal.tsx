@@ -53,13 +53,11 @@ export const ShareModal: React.FC<Props> = ({
   const currentUserId = user?.id || null;
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sharing, setSharing] = useState<{
-    permissions: api.DrawingPermissionRow[];
-    linkShares: api.DrawingLinkShareRow[];
-  } | null>(null);
+  const [sharing, setSharing] = useState<api.DrawingSharing | null>(null);
 
   const [userQuery, setUserQuery] = useState("");
   const [userResults, setUserResults] = useState<api.ShareResolvedUser[]>([]);
+  const [teamResults, setTeamResults] = useState<api.TeamSummary[]>([]);
   const [userPermission, setUserPermission] = useState<"view" | "edit">("view");
   const [linkPermission, setLinkPermission] = useState<"view" | "edit">("view");
   const [expiryOption, setExpiryOption] = useState("1h");
@@ -120,6 +118,7 @@ export const ShareModal: React.FC<Props> = ({
     if (!isOpen) return;
     setUserQuery("");
     setUserResults([]);
+    setTeamResults([]);
     setUserPermission("view");
     setLinkPermission("view");
     setExpiryOption("1h");
@@ -133,18 +132,25 @@ export const ShareModal: React.FC<Props> = ({
     const q = userQuery.trim();
     if (q.length < 3) {
       setUserResults([]);
+      setTeamResults([]);
       return;
     }
     let cancelled = false;
     const run = async () => {
       try {
-        const users = await api.resolveShareUsers(drawingId, q);
+        const { users, teams } = await api.resolveShareCandidates(drawingId, q);
         const filtered = currentUserId
           ? users.filter((u) => u.id !== currentUserId)
           : users;
-        if (!cancelled) setUserResults(filtered);
+        if (!cancelled) {
+          setUserResults(filtered);
+          setTeamResults(teams);
+        }
       } catch {
-        if (!cancelled) setUserResults([]);
+        if (!cancelled) {
+          setUserResults([]);
+          setTeamResults([]);
+        }
       }
     };
     const t = window.setTimeout(run, 250);
@@ -188,6 +194,7 @@ export const ShareModal: React.FC<Props> = ({
       await refresh();
       setUserQuery("");
       setUserResults([]);
+      setTeamResults([]);
     } catch (err: unknown) {
       let message = "Failed to share with user";
       if (api.isAxiosError(err)) {
@@ -238,6 +245,55 @@ export const ShareModal: React.FC<Props> = ({
         if (serverMessage) message = serverMessage;
       }
       setError(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpsertTeam = async (
+    teamId: string,
+    permission: "view" | "edit",
+    fallbackMessage: string,
+  ) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      await api.upsertDrawingTeamPermission(drawingId, { teamId, permission });
+      await refresh();
+      setUserQuery("");
+      setUserResults([]);
+      setTeamResults([]);
+    } catch (err: unknown) {
+      let message = fallbackMessage;
+      if (api.isAxiosError(err)) {
+        const serverMessage =
+          typeof err.response?.data?.message === "string"
+            ? err.response.data.message
+            : null;
+        if (serverMessage) message = serverMessage;
+      }
+      setError(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleAddTeam = (teamId: string) =>
+    handleUpsertTeam(teamId, userPermission, "Failed to share with team");
+
+  const handleUpdateTeamPermission = (
+    teamId: string,
+    permission: "view" | "edit",
+  ) => handleUpsertTeam(teamId, permission, "Failed to update team access");
+
+  const handleRevokeTeam = async (teamId: string) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      await api.revokeDrawingTeamPermission(drawingId, teamId);
+      await refresh();
+    } catch {
+      setError("Failed to revoke team access");
     } finally {
       setIsLoading(false);
     }
@@ -325,11 +381,15 @@ export const ShareModal: React.FC<Props> = ({
             userQuery={userQuery}
             userPermission={userPermission}
             userResults={userResults}
+            teamResults={teamResults}
             setUserQuery={setUserQuery}
             setUserPermission={setUserPermission}
             handleAddUser={handleAddUser}
             handleRevokeUser={handleRevokeUser}
             handleUpdateUserPermission={handleUpdateUserPermission}
+            handleAddTeam={handleAddTeam}
+            handleRevokeTeam={handleRevokeTeam}
+            handleUpdateTeamPermission={handleUpdateTeamPermission}
           />
 
           <GeneralAccessSection

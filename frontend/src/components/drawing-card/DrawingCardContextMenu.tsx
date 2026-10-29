@@ -197,7 +197,8 @@ export const DrawingCardContextMenu: React.FC<DrawingCardContextMenuProps> = ({
             </button>
           </>
         ) : null}
-        {isShared && onHide ? (
+        {/* Drawings reached only through a team cannot be hidden. */}
+        {isShared && onHide && drawing.canHide !== false ? (
           <>
             <div className="ui-menu-separator" />
             <button

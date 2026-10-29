@@ -1,4 +1,4 @@
-import type { Drawing, DrawingSummary } from "../types";
+import type { Drawing, DrawingSummary, TeamSummary } from "../types";
 import { normalizePreviewSvg } from "../utils/previewSvg";
 import { api, isAxiosError } from "./client";
 
@@ -221,6 +221,18 @@ export const resolveShareUsers = async (
   return response.data.users;
 };
 
+// People and teams matching a search, for the share dialog.
+export const resolveShareCandidates = async (
+  drawingId: string,
+  q: string,
+): Promise<{ users: ShareResolvedUser[]; teams: TeamSummary[] }> => {
+  const response = await api.get<{
+    users: ShareResolvedUser[];
+    teams?: TeamSummary[];
+  }>(`/drawings/${drawingId}/share-resolve`, { params: { q } });
+  return { users: response.data.users, teams: response.data.teams ?? [] };
+};
+
 export type DrawingPermissionRow = {
   id: string;
   granteeUserId: string;
@@ -228,6 +240,13 @@ export type DrawingPermissionRow = {
   createdAt: string | number | Date;
   updatedAt: string | number | Date;
   granteeUser: ShareResolvedUser;
+};
+
+export type DrawingTeamPermissionRow = {
+  teamId: string;
+  permission: "view" | "edit";
+  createdAt: string | number | Date;
+  team: TeamSummary;
 };
 
 export type DrawingLinkShareRow = {
@@ -240,17 +259,24 @@ export type DrawingLinkShareRow = {
   lastUsedAt: string | null;
 };
 
+export type DrawingSharing = {
+  permissions: DrawingPermissionRow[];
+  teamPermissions: DrawingTeamPermissionRow[];
+  linkShares: DrawingLinkShareRow[];
+};
+
 export const getDrawingSharing = async (
   drawingId: string,
-): Promise<{
-  permissions: DrawingPermissionRow[];
-  linkShares: DrawingLinkShareRow[];
-}> => {
-  const response = await api.get<{
-    permissions: DrawingPermissionRow[];
-    linkShares: DrawingLinkShareRow[];
-  }>(`/drawings/${drawingId}/sharing`);
-  return response.data;
+): Promise<DrawingSharing> => {
+  const response = await api.get<
+    Omit<DrawingSharing, "teamPermissions"> & {
+      teamPermissions?: DrawingTeamPermissionRow[];
+    }
+  >(`/drawings/${drawingId}/sharing`);
+  return {
+    ...response.data,
+    teamPermissions: response.data.teamPermissions ?? [],
+  };
 };
 
 export const upsertDrawingPermission = async (
@@ -270,6 +296,27 @@ export const revokeDrawingPermission = async (
 ): Promise<{ success: true }> => {
   const response = await api.delete<{ success: true }>(
     `/drawings/${drawingId}/permissions/${permissionId}`,
+  );
+  return response.data;
+};
+
+export const upsertDrawingTeamPermission = async (
+  drawingId: string,
+  params: { teamId: string; permission: "view" | "edit" },
+): Promise<{ permission: DrawingTeamPermissionRow }> => {
+  const response = await api.post<{ permission: DrawingTeamPermissionRow }>(
+    `/drawings/${drawingId}/team-permissions`,
+    { teamId: params.teamId, role: params.permission },
+  );
+  return response.data;
+};
+
+export const revokeDrawingTeamPermission = async (
+  drawingId: string,
+  teamId: string,
+): Promise<{ success: true }> => {
+  const response = await api.delete<{ success: true }>(
+    `/drawings/${drawingId}/team-permissions/${teamId}`,
   );
   return response.data;
 };
