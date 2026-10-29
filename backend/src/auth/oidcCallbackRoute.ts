@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { Prisma } from "../generated/client";
 import { logAuditEvent } from "../utils/audit";
 import type { RegisterOidcRoutesDeps } from "./oidcRoutes";
+import { syncOidcTeamMemberships } from "./oidcTeamSync";
 import { hashTokenForStorage } from "./tokenSecurity";
 import {
   canUseIdTokenSigningAlg,
@@ -59,6 +60,31 @@ export const registerOidcCallbackRoute = (
     getOidcClient,
     buildOidcClient,
   } = deps;
+  // Two first sign-ins of the same new group can race to create its team: the
+  // loser hits the unique group constraint and simply retries once. Any other
+  // failure aborts the sign-in rather than keep memberships that should end.
+  const syncOidcTeamsWithRetry = async (userId: string, groups: string[]) => {
+    const run = () =>
+      prisma.$transaction((tx) =>
+        syncOidcTeamMemberships({
+          tx,
+          userId,
+          groups,
+          teamGroupPrefix: config.oidc.teamGroupPrefix,
+        }),
+      );
+    try {
+      return await run();
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        return run();
+      }
+      throw error;
+    }
+  };
   const userSelect = {
     id: true,
     username: true,
@@ -218,12 +244,9 @@ export const registerOidcCallbackRoute = (
           flow.returnTo,
         );
       }
+      const groupsClaimValue = readClaimByPath(claims, config.oidc.groupsClaim);
       const oidcGroups = Array.from(
-        new Set(
-          normalizeClaimGroups(
-            readClaimByPath(claims, config.oidc.groupsClaim),
-          ),
-        ),
+        new Set(normalizeClaimGroups(groupsClaimValue)),
       );
       const adminGroups = new Set(config.oidc.adminGroups);
       const shouldBeAdmin =
@@ -330,6 +353,25 @@ export const registerOidcCallbackRoute = (
           "account_inactive",
           flow.returnTo,
         );
+      }
+      // Without a groups claim there is nothing to reconcile: keeping the
+      // memberships avoids emptying every team when the provider stops sending
+      // groups (missing scope or claim mapping).
+      if (groupsClaimValue !== undefined) {
+        const teamSync = await syncOidcTeamsWithRetry(user.id, oidcGroups);
+        const changed =
+          teamSync.createdTeamIds.length +
+          teamSync.addedTeamIds.length +
+          teamSync.removedTeamIds.length;
+        if (changed > 0 && config.enableAuditLogging) {
+          await logAuditEvent({
+            userId: user.id,
+            action: "oidc_team_sync",
+            ipAddress: req.ip || req.connection.remoteAddress || undefined,
+            userAgent: req.headers["user-agent"] || undefined,
+            details: { ...teamSync },
+          });
+        }
       }
       const { accessToken, refreshToken } = generateTokens(
         user.id,

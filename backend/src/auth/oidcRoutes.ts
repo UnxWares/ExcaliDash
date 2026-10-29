@@ -60,6 +60,7 @@ export type RegisterOidcRoutesDeps = {
       emailVerifiedClaim: string;
       groupsClaim: string;
       adminGroups: string[];
+      teamGroupPrefix: string;
       requireEmailVerified: boolean;
       jitProvisioning: boolean;
       firstUserAdmin: boolean;

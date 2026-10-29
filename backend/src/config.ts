@@ -120,6 +120,7 @@ interface OidcConfig {
   emailVerifiedClaim: string;
   groupsClaim: string;
   adminGroups: string[];
+  teamGroupPrefix: string;
   requireEmailVerified: boolean;
   jitProvisioning: boolean;
   firstUserAdmin: boolean;
@@ -326,6 +327,7 @@ const resolveOidcConfig = (authMode: AuthMode): OidcConfig => {
     ),
     groupsClaim,
     adminGroups,
+    teamGroupPrefix: readString("OIDC_TEAM_GROUP_PREFIX", "").trim(),
     requireEmailVerified: readBoolean("OIDC_REQUIRE_EMAIL_VERIFIED", true),
     jitProvisioning: readBoolean("OIDC_JIT_PROVISIONING", true),
     firstUserAdmin: readBoolean("OIDC_FIRST_USER_ADMIN", true),

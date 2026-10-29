@@ -85,6 +85,13 @@ export const oidcEnv: readonly EnvVarSpec[] = [
     doc: "Comma-separated groups whose members are granted admin.",
   },
   {
+    name: "OIDC_TEAM_GROUP_PREFIX",
+    group: "OIDC",
+    kind: "string",
+    example: "excalidash-",
+    doc: "Groups starting with this prefix become teams, created on first sign-in, with the prefix removed from the team name. Empty disables automatic teams.",
+  },
+  {
     name: "OIDC_REQUIRE_EMAIL_VERIFIED",
     group: "OIDC",
     kind: "boolean",
