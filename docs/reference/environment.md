@@ -51,6 +51,12 @@ Set `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `OIDC_REDIREC
 
 Use `https://YOUR_HOST/api/auth/oidc/callback` as the redirect URI. It must match the provider registration. See [authentication](/guide/authentication).
 
+| Variable                 | Default  | Purpose                                                                  |
+| ------------------------ | -------- | ------------------------------------------------------------------------ |
+| `OIDC_GROUPS_CLAIM`      | `groups` | Claim, or dotted path, carrying the user's groups                        |
+| `OIDC_ADMIN_GROUPS`      | unset    | Comma-separated groups whose members are administrators                  |
+| `OIDC_TEAM_GROUP_PREFIX` | unset    | Groups starting with this prefix become [teams](/guide/teams) at sign-in |
+
 ## Images and backups
 
 | Variable                | Default                      | Purpose                                           |

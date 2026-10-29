@@ -11,7 +11,7 @@ ExcaliDash lets people edit Excalidraw drawings together while storing them on y
 
 1. [Create accounts](/guide/first-run) for the people who will use your workspace, or [configure OpenID Connect](/guide/authentication).
 2. Create or open a drawing and select **Share**.
-3. Add the account you want to invite and choose viewing or editing access.
+3. Add the account or the [team](/guide/teams) you want to invite and choose viewing or editing access.
 4. Have the invited person open the drawing from their shared workspace.
 5. Open the same drawing at the same time to work together. Editing access allows collaborators to change the drawing; viewing access allows them to read it.
 
@@ -23,7 +23,7 @@ Live cursors and presence help you see who is working on the drawing.
 
 ## Share collections
 
-Collections group related drawings. Right-click a collection in the sidebar and select **Share Collection**. Share the collection with other accounts and select their access level to work on a set of drawings together. Keep access scoped to the people who need it.
+Collections group related drawings. Right-click a collection in the sidebar and select **Share Collection**. Share the collection with other accounts or [teams](/guide/teams) and select their access level to work on a set of drawings together. Keep access scoped to the people who need it.
 
 <ThemeScreenshot light="/images/screenshots/share-collection-light.png" dark="/images/screenshots/share-collection.png" alt="Share Collection dialog open for Platform engineering" />
 

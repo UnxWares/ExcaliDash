@@ -76,6 +76,8 @@ Notes:
 
 To require provider sign-in, set `AUTH_MODE` to `oidc_enforced`.
 
+To manage [teams](/guide/teams#sync-teams-from-your-identity-provider) from your provider groups, link teams to groups or set `OIDC_TEAM_GROUP_PREFIX`.
+
 ## Troubleshoot provider sign-in
 
 Check that the redirect URI matches exactly, including the scheme and path. Read the backend logs for discovery or callback errors:

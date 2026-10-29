@@ -60,6 +60,7 @@ export default defineConfig({
           { text: "Authentication", link: "/guide/authentication" },
           { text: "Configuration", link: "/guide/configuration" },
           { text: "Collaboration", link: "/guide/collaboration" },
+          { text: "Teams", link: "/guide/teams" },
           { text: "Storage and backups", link: "/guide/storage-backups" },
         ],
       },
