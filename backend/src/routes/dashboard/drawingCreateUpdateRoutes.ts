@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import { Prisma } from "../../generated/client";
 import {
   canEditDrawing,
+  getCollectionShareAccess,
   getDrawingAccess,
   isOwnerAccess,
 } from "../../authz/sharing";
@@ -126,14 +127,12 @@ export const registerDrawingCreateUpdateRoutes = (
 
         // If the collection belongs to someone else, check the user has editor access
         if (collection.userId !== req.user.id) {
-          const share = await prisma.collectionShare.findFirst({
-            where: {
-              collectionId: targetCollectionId,
-              granteeUserId: req.user.id,
-              role: "edit",
-            },
+          const shareAccess = await getCollectionShareAccess({
+            prisma,
+            userId: req.user.id,
+            collectionId: targetCollectionId,
           });
-          if (!share)
+          if (shareAccess !== "edit")
             return res
               .status(403)
               .json({ error: "No edit access to this collection" });
@@ -331,15 +330,12 @@ export const registerDrawingCreateUpdateRoutes = (
             where: { id: payload.collectionId, userId: actingUserId },
           });
           if (!ownedCollection) {
-            const editableShare = await prisma.collectionShare.findFirst({
-              where: {
-                collectionId: payload.collectionId,
-                granteeUserId: actingUserId,
-                role: "edit",
-              },
-              select: { id: true },
+            const shareAccess = await getCollectionShareAccess({
+              prisma,
+              userId: actingUserId,
+              collectionId: payload.collectionId,
             });
-            if (!editableShare) {
+            if (shareAccess !== "edit") {
               return res.status(404).json({ error: "Collection not found" });
             }
           }

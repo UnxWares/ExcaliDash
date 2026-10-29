@@ -39,16 +39,29 @@ export const getDrawingAccess = async (params: {
     if (!drawing) return "none";
     if (drawing.userId === params.principal.userId) return "owner";
 
-    const perm = await params.prisma.drawingPermission.findUnique({
-      where: {
-        drawingId_granteeUserId: {
-          drawingId: params.drawingId,
-          granteeUserId: params.principal.userId,
+    const [perm, teamPerms] = await Promise.all([
+      params.prisma.drawingPermission.findUnique({
+        where: {
+          drawingId_granteeUserId: {
+            drawingId: params.drawingId,
+            granteeUserId: params.principal.userId,
+          },
         },
-      },
-      select: { permission: true },
-    });
-    baseAccess = normalizeDrawingPermission(perm?.permission) ?? baseAccess;
+        select: { permission: true },
+      }),
+      params.prisma.drawingTeamPermission.findMany({
+        where: {
+          drawingId: params.drawingId,
+          team: { members: { some: { userId: params.principal.userId } } },
+        },
+        select: { permission: true },
+      }),
+    ]);
+    baseAccess =
+      strongestPermission([
+        perm?.permission,
+        ...teamPerms.map((teamPerm) => teamPerm.permission),
+      ]) ?? baseAccess;
 
     // A drawing inherits the strongest access available from its collection.
     // This matters when a direct drawing grant is weaker than the collection grant.
@@ -63,15 +76,12 @@ export const getDrawingAccess = async (params: {
       if (ownedCollection) {
         baseAccess = "owner";
       } else {
-        const collectionShare = await params.prisma.collectionShare.findFirst({
-          where: {
-            collectionId: drawing.collectionId,
-            granteeUserId: params.principal.userId,
-          },
-          select: { role: true },
-        });
         const collectionAccess =
-          normalizeDrawingPermission(collectionShare?.role) ?? "none";
+          (await getCollectionShareAccess({
+            prisma: params.prisma,
+            userId: params.principal.userId,
+            collectionId: drawing.collectionId,
+          })) ?? "none";
         baseAccess = maxAccess(baseAccess, collectionAccess);
       }
     }
@@ -87,6 +97,47 @@ export const getDrawingAccess = async (params: {
   const linkAccess: DrawingAccess = linkPolicy ?? "none";
 
   return maxAccess(baseAccess, linkAccess);
+};
+
+// Strongest role a user who does not own a collection gets on it, from a direct
+// share or from the shares of the teams they belong to.
+export const getCollectionShareAccess = async (params: {
+  prisma: PrismaClient;
+  userId: string;
+  collectionId: string;
+}): Promise<DrawingPermission | null> => {
+  const [directShare, teamShares] = await Promise.all([
+    params.prisma.collectionShare.findFirst({
+      where: {
+        collectionId: params.collectionId,
+        granteeUserId: params.userId,
+      },
+      select: { role: true },
+    }),
+    params.prisma.collectionTeamShare.findMany({
+      where: {
+        collectionId: params.collectionId,
+        team: { members: { some: { userId: params.userId } } },
+      },
+      select: { role: true },
+    }),
+  ]);
+  return strongestPermission([
+    directShare?.role,
+    ...teamShares.map((share) => share.role),
+  ]);
+};
+
+export const strongestPermission = (
+  inputs: unknown[],
+): DrawingPermission | null => {
+  let strongest: DrawingPermission | null = null;
+  for (const input of inputs) {
+    const permission = normalizeDrawingPermission(input);
+    if (permission === "edit") return "edit";
+    if (permission === "view") strongest = "view";
+  }
+  return strongest;
 };
 
 export const canViewDrawing = (

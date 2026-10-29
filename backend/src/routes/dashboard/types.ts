@@ -74,6 +74,8 @@ export type DashboardRouteDeps = {
   // disconnect collaborators whose access was just revoked. Optional so route
   // unit tests can omit the socket layer.
   revalidateDrawingAccess?: (drawingId: string) => Promise<void> | void;
+  // Same check for every open drawing room, after a team or team share changes.
+  revalidateAllDrawingAccess?: () => Promise<void> | void;
   // Socket.IO server used to broadcast edits into a drawing's
   // collaboration room. Optional so route unit tests can omit the socket layer.
   io?: SocketIoServer;

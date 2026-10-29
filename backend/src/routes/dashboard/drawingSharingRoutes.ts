@@ -5,6 +5,7 @@ import {
   normalizeDrawingPermission,
 } from "../../authz/sharing";
 import type { DrawingRouteContext } from "./drawingRouteContext";
+import { searchTeamsForSharing } from "./teamSharing";
 
 export const registerDrawingSharingRoutes = (
   app: express.Express,
@@ -42,7 +43,7 @@ export const registerDrawingSharingRoutes = (
       const { id } = req.params;
       const qRaw = typeof req.query.q === "string" ? req.query.q.trim() : "";
       const q = qRaw.toLowerCase();
-      if (q.length < 3) return res.json({ users: [] });
+      if (q.length < 3) return res.json({ users: [], teams: [] });
 
       const drawing = await prisma.drawing.findUnique({
         where: { id },
@@ -52,21 +53,32 @@ export const registerDrawingSharingRoutes = (
         return res.status(404).json({ error: "Drawing not found" });
       }
 
-      const users = await prisma.user.findMany({
-        where: {
-          isActive: true,
-          id: { not: req.user.id },
-          OR: [
-            { email: { contains: q } },
-            { name: { contains: q } },
-            { username: { contains: q } },
-          ],
-        },
-        select: { id: true, name: true, email: true },
-        take: 10,
+      const [users, sharedTeams] = await Promise.all([
+        prisma.user.findMany({
+          where: {
+            isActive: true,
+            id: { not: req.user.id },
+            OR: [
+              { email: { contains: q } },
+              { name: { contains: q } },
+              { username: { contains: q } },
+            ],
+          },
+          select: { id: true, name: true, email: true },
+          take: 10,
+        }),
+        prisma.drawingTeamPermission.findMany({
+          where: { drawingId: id },
+          select: { teamId: true },
+        }),
+      ]);
+      const teams = await searchTeamsForSharing({
+        prisma,
+        q,
+        excludeTeamIds: sharedTeams.map((share) => share.teamId),
       });
 
-      return res.json({ users });
+      return res.json({ users, teams });
     }),
   );
 
@@ -85,7 +97,7 @@ export const registerDrawingSharingRoutes = (
         return res.status(404).json({ error: "Drawing not found" });
       }
 
-      const [permissions, linkShares] = await Promise.all([
+      const [permissions, teamPermissions, linkShares] = await Promise.all([
         prisma.drawingPermission.findMany({
           where: { drawingId: id },
           select: {
@@ -97,6 +109,22 @@ export const registerDrawingSharingRoutes = (
             granteeUser: { select: { id: true, name: true, email: true } },
           },
           orderBy: { createdAt: "desc" },
+        }),
+        prisma.drawingTeamPermission.findMany({
+          where: { drawingId: id },
+          select: {
+            teamId: true,
+            permission: true,
+            createdAt: true,
+            team: {
+              select: {
+                id: true,
+                name: true,
+                _count: { select: { members: true } },
+              },
+            },
+          },
+          orderBy: { createdAt: "asc" },
         }),
         prisma.drawingLinkShare.findMany({
           where: { drawingId: id },
@@ -113,7 +141,18 @@ export const registerDrawingSharingRoutes = (
         }),
       ]);
 
-      return res.json({ permissions, linkShares });
+      return res.json({
+        permissions,
+        teamPermissions: teamPermissions.map(({ team, ...rest }) => ({
+          ...rest,
+          team: {
+            id: team.id,
+            name: team.name,
+            memberCount: team._count.members,
+          },
+        })),
+        linkShares,
+      });
     }),
   );
 

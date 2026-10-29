@@ -2,8 +2,9 @@ import express from "express";
 import { Prisma } from "../../generated/client";
 import {
   canViewDrawing,
+  getCollectionShareAccess,
   getDrawingAccess,
-  normalizeDrawingPermission,
+  strongestPermission,
 } from "../../authz/sharing";
 import { getUserTrashCollectionId, toPublicTrashCollectionId } from "./trash";
 import { SortDirection, SortField } from "./types";
@@ -89,16 +90,15 @@ export const registerDrawingListRoutes = (
             return res.status(404).json({ error: "Collection not found" });
           }
 
-          // Check if user is owner or has a share entry
+          // Check if user is owner or has a share entry, directly or through a team
           const isOwner = collection.userId === req.user.id;
           if (!isOwner) {
-            const share = await prisma.collectionShare.findFirst({
-              where: {
-                collectionId: normalizedCollectionId,
-                granteeUserId: req.user.id,
-              },
+            const shareAccess = await getCollectionShareAccess({
+              prisma,
+              userId: req.user.id,
+              collectionId: normalizedCollectionId,
             });
-            if (!share) {
+            if (!shareAccess) {
               return res.status(404).json({ error: "Collection not found" });
             }
           }
@@ -313,36 +313,78 @@ export const registerDrawingListRoutes = (
             ? { createdAt: parsedSortDirection }
             : { updatedAt: parsedSortDirection };
 
-      // Get collection IDs shared with this user to exclude drawings already visible via collection sharing
-      const sharedCollectionIds = await prisma.collectionShare.findMany({
-        where: { granteeUserId: req.user.id },
-        select: { collectionId: true },
-      });
-      const sharedColIds = sharedCollectionIds.map((s) => s.collectionId);
+      const inMyTeams: Prisma.TeamWhereInput = {
+        members: { some: { userId: req.user.id } },
+      };
+
+      // Get collection IDs shared with this user, directly or through a team, to
+      // exclude drawings already visible via collection sharing
+      const [sharedCollectionIds, teamSharedCollectionIds] = await Promise.all([
+        prisma.collectionShare.findMany({
+          where: { granteeUserId: req.user.id },
+          select: { collectionId: true },
+        }),
+        prisma.collectionTeamShare.findMany({
+          where: { team: inMyTeams },
+          select: { collectionId: true },
+        }),
+      ]);
+      const sharedColIds = Array.from(
+        new Set(
+          [...sharedCollectionIds, ...teamSharedCollectionIds].map(
+            (s) => s.collectionId,
+          ),
+        ),
+      );
 
       const whereDrawing: Prisma.DrawingWhereInput = {
         // "Shared with me" should only include drawings owned by someone else.
         // Some deployments keep an owner self-permission row for access control; exclude those.
         userId: { not: req.user.id },
-        permissions: {
-          some: {
-            granteeUserId: req.user.id,
-            // Recipients can hide a shared drawing from their own list.
-            hidden: false,
+        OR: [
+          { permissions: { some: { granteeUserId: req.user.id } } },
+          { teamPermissions: { some: { team: inMyTeams } } },
+        ],
+        AND: [
+          // Recipients can hide a shared drawing from their own list.
+          {
+            NOT: {
+              permissions: {
+                some: { granteeUserId: req.user.id, hidden: true },
+              },
+            },
           },
-        },
-        // Exclude drawings already accessible via a shared collection. A bare
-        // NOT IN would also drop drawings outside any collection (NULL).
-        ...(sharedColIds.length > 0 && {
-          OR: [
-            { collectionId: null },
-            { collectionId: { notIn: sharedColIds } },
-          ],
-        }),
+          // Exclude drawings already accessible via a shared collection. A bare
+          // NOT IN would also drop drawings outside any collection (NULL).
+          ...(sharedColIds.length > 0
+            ? [
+                {
+                  OR: [
+                    { collectionId: null },
+                    { collectionId: { notIn: sharedColIds } },
+                  ],
+                },
+              ]
+            : []),
+        ],
       };
       if (searchTerm) {
         whereDrawing.name = { contains: searchTerm };
       }
+
+      const accessSelect = {
+        permissions: {
+          where: { granteeUserId: req.user.id },
+          select: { permission: true },
+        },
+        teamPermissions: {
+          where: { team: inMyTeams },
+          select: {
+            permission: true,
+            team: { select: { id: true, name: true } },
+          },
+        },
+      } satisfies Prisma.DrawingInclude;
 
       const summarySelect: Prisma.DrawingSelect = {
         id: true,
@@ -353,10 +395,7 @@ export const registerDrawingListRoutes = (
         updatedAt: true,
         userId: true,
         user: { select: { name: true } },
-        permissions: {
-          where: { granteeUserId: req.user.id },
-          select: { permission: true },
-        },
+        ...accessSelect,
       };
 
       const queryOptions: Prisma.DrawingFindManyArgs = {
@@ -366,7 +405,10 @@ export const registerDrawingListRoutes = (
         skip: parsedOffset,
       };
       if (shouldIncludeData) {
-        queryOptions.include = { user: { select: { name: true } } };
+        queryOptions.include = {
+          user: { select: { name: true } },
+          ...accessSelect,
+        };
       } else {
         queryOptions.select = summarySelect;
       }
@@ -377,16 +419,33 @@ export const registerDrawingListRoutes = (
       ]);
 
       const normalize = (d: any) => {
-        const rawPerm = Array.isArray(d?.permissions)
-          ? d.permissions[0]?.permission
-          : null;
-        const perm = normalizeDrawingPermission(rawPerm) ?? "view";
-        const { permissions: _permissions, ...rest } = d;
+        const directPermissions: { permission: string }[] = Array.isArray(
+          d?.permissions,
+        )
+          ? d.permissions
+          : [];
+        const teamPermissions: {
+          permission: string;
+          team: { id: string; name: string };
+        }[] = Array.isArray(d?.teamPermissions) ? d.teamPermissions : [];
+        const perm =
+          strongestPermission([
+            ...directPermissions.map((p) => p.permission),
+            ...teamPermissions.map((p) => p.permission),
+          ]) ?? "view";
+        const {
+          permissions: _permissions,
+          teamPermissions: _teamPermissions,
+          ...rest
+        } = d;
         return {
           ...rest,
           // Collections are owner-scoped; don't leak the owner's collection ids to viewers.
           collectionId: null,
           accessLevel: perm,
+          // Hiding only applies to drawings shared with this user directly.
+          canHide: directPermissions.length > 0,
+          sharedViaTeams: teamPermissions.map((p) => p.team),
           creatorName: d.user?.name ?? null,
           user: undefined,
         };

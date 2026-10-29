@@ -24,6 +24,7 @@ model User {
   collections         Collection[]
   drawingPermissions  DrawingPermission[]
   collectionShares    CollectionShare[]
+  teamMemberships     TeamMember[]
   passwordResetTokens PasswordResetToken[]
   refreshTokens       RefreshToken[]
   apiKeys             ApiKey[]
@@ -87,6 +88,7 @@ model Collection {
   user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   drawings  Drawing[]
   shares    CollectionShare[]
+  teamShares CollectionTeamShare[]
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
 
@@ -106,6 +108,7 @@ model Drawing {
   collectionId String?
   collection   Collection? @relation(fields: [collectionId], references: [id])
   permissions  DrawingPermission[]
+  teamPermissions DrawingTeamPermission[]
   linkShares   DrawingLinkShare[]
   snapshots    DrawingSnapshot[]
   agentKeys    ApiKey[]
@@ -183,6 +186,69 @@ model CollectionShare {
   @@unique([collectionId, granteeUserId])
   @@index([collectionId])
   @@index([granteeUserId])
+}
+
+model Team {
+  id                 String                  @id @default(uuid())
+  name               String
+  description        String?
+  // Identity provider group whose members are synced into this team at sign-in.
+  oidcGroup          String?                 @unique
+  createdByUserId    String?
+  members            TeamMember[]
+  collectionShares   CollectionTeamShare[]
+  drawingPermissions DrawingTeamPermission[]
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+
+  @@index([name])
+}
+
+model TeamMember {
+  id        String   @id @default(uuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // "member" or "manager". Managers can add and remove the members added by hand.
+  role      String   @default("member")
+  // "manual" when added in ExcaliDash, "oidc" when synced from the identity provider.
+  source    String   @default("manual")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamId, userId])
+  @@index([userId])
+}
+
+model CollectionTeamShare {
+  id              String     @id @default(uuid())
+  collectionId    String
+  collection      Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  teamId          String
+  team            Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  role            String     @default("view")
+  createdByUserId String
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([collectionId, teamId])
+  @@index([teamId])
+}
+
+model DrawingTeamPermission {
+  id              String   @id @default(uuid())
+  drawingId       String
+  drawing         Drawing  @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  teamId          String
+  team            Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  permission      String
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([drawingId, teamId])
+  @@index([teamId])
 }
 
 model Library {

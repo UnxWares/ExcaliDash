@@ -28,6 +28,8 @@ export type SocketHandlers = {
   // Re-check access for every socket currently in a drawing's room; used by the
   // sharing routes to kick collaborators the moment their access is revoked.
   revalidateDrawingAccess: (drawingId: string) => Promise<void>;
+  // Same check for every open drawing room, after a team or team share changes.
+  revalidateAllDrawingAccess: () => Promise<void>;
 };
 
 export const registerSocketHandlers = ({
@@ -408,5 +410,18 @@ export const registerSocketHandlers = ({
     });
   };
 
-  return { revalidateDrawingAccess };
+  // Team changes can affect any drawing, so re-check every open drawing room.
+  const revalidateAllDrawingAccess = async (): Promise<void> => {
+    const drawingIds: string[] = [];
+    for (const roomId of io.sockets.adapter.rooms.keys()) {
+      if (roomId.startsWith("drawing_")) {
+        drawingIds.push(roomId.slice("drawing_".length));
+      }
+    }
+    for (const drawingId of drawingIds) {
+      await revalidateDrawingAccess(drawingId);
+    }
+  };
+
+  return { revalidateDrawingAccess, revalidateAllDrawingAccess };
 };

@@ -591,6 +591,7 @@ registerDashboardRoutes(app, {
   internDrawingFiles: (files, userId, drawingId) =>
     internDrawingFilesWithPrisma(files, userId, drawingId, prisma),
   revalidateDrawingAccess: socketHandlers.revalidateDrawingAccess,
+  revalidateAllDrawingAccess: socketHandlers.revalidateAllDrawingAccess,
   io,
 });
 registerFileRoutes(app, { prisma, requireAuth, optionalAuth, asyncHandler });

@@ -1,6 +1,8 @@
 import express from "express";
 import { DashboardRouteDeps } from "./types";
 import { getUserTrashCollectionId, isTrashCollectionId } from "./trash";
+import { strongestPermission } from "../../authz/sharing";
+import { searchTeamsForSharing } from "./teamSharing";
 
 export const registerCollectionRoutes = (
   app: express.Express,
@@ -34,17 +36,21 @@ export const registerCollectionRoutes = (
       const hasInternalTrash = rawCollections.some(
         (c) => c.id === trashCollectionId,
       );
-      const shareCountMap = await prisma.collectionShare.groupBy({
-        by: ["collectionId"],
-        where: {
-          collectionId: {
-            in: rawCollections.map((c) => c.id),
-          },
-        },
-        _count: { collectionId: true },
-      });
+      const ownedCollectionIds = rawCollections.map((c) => c.id);
+      const [shareCountMap, teamShareCountMap] = await Promise.all([
+        prisma.collectionShare.groupBy({
+          by: ["collectionId"],
+          where: { collectionId: { in: ownedCollectionIds } },
+          _count: { collectionId: true },
+        }),
+        prisma.collectionTeamShare.groupBy({
+          by: ["collectionId"],
+          where: { collectionId: { in: ownedCollectionIds } },
+          _count: { collectionId: true },
+        }),
+      ]);
       const sharedCollectionIds = new Set(
-        shareCountMap.map((s) => s.collectionId),
+        [...shareCountMap, ...teamShareCountMap].map((s) => s.collectionId),
       );
 
       const ownedCollections = rawCollections
@@ -67,22 +73,61 @@ export const registerCollectionRoutes = (
               },
         );
 
-      // Collections shared with this user by others
-      const sharedEntries = await prisma.collectionShare.findMany({
-        where: { granteeUserId: req.user.id },
+      // Collections shared with this user by others, directly or through a team
+      const collectionWithOwner = {
         include: {
-          collection: {
-            include: {
-              user: { select: { id: true, name: true, email: true } },
-            },
-          },
+          user: { select: { id: true, name: true, email: true } },
         },
-      });
-      const sharedCollections = sharedEntries.map((s) => ({
-        ...s.collection,
-        sharedRole: s.role,
-        isOwner: false,
-      }));
+      };
+      const [sharedEntries, teamSharedEntries] = await Promise.all([
+        prisma.collectionShare.findMany({
+          where: { granteeUserId: req.user.id },
+          include: { collection: collectionWithOwner },
+        }),
+        prisma.collectionTeamShare.findMany({
+          where: {
+            team: { members: { some: { userId: req.user.id } } },
+            // A team member who owns the collection already lists it above.
+            collection: { userId: { not: req.user.id } },
+          },
+          include: {
+            collection: collectionWithOwner,
+            team: { select: { id: true, name: true } },
+          },
+          orderBy: { createdAt: "asc" },
+        }),
+      ]);
+      type SharedCollection = (typeof sharedEntries)[number]["collection"] & {
+        sharedRole: string;
+        isOwner: false;
+        sharedViaTeams: { id: string; name: string }[];
+      };
+      const sharedById = new Map<string, SharedCollection>();
+      for (const s of sharedEntries) {
+        sharedById.set(s.collectionId, {
+          ...s.collection,
+          sharedRole: s.role,
+          isOwner: false,
+          sharedViaTeams: [],
+        });
+      }
+      for (const s of teamSharedEntries) {
+        const existing = sharedById.get(s.collectionId);
+        if (existing) {
+          existing.sharedRole =
+            strongestPermission([existing.sharedRole, s.role]) ??
+            existing.sharedRole;
+          existing.sharedViaTeams.push(s.team);
+        } else {
+          sharedById.set(s.collectionId, {
+            ...s.collection,
+            sharedRole: s.role,
+            isOwner: false,
+            sharedViaTeams: [s.team],
+          });
+        }
+      }
+      const sharedCollections = Array.from(sharedById.values());
 
       return res.json([...ownedCollections, ...sharedCollections]);
     }),
@@ -179,6 +224,7 @@ export const registerCollectionRoutes = (
           data: { collectionId: null },
         }),
         prisma.collectionShare.deleteMany({ where: { collectionId: id } }),
+        prisma.collectionTeamShare.deleteMany({ where: { collectionId: id } }),
         prisma.collection.deleteMany({ where: { id, userId: req.user.id } }),
       ]);
       invalidateDrawingsCache();
@@ -352,7 +398,7 @@ export const registerCollectionRoutes = (
       const { id } = req.params;
       const q = String(req.query.q || "").trim();
 
-      if (q.length < 2) return res.json({ users: [] });
+      if (q.length < 2) return res.json({ users: [], teams: [] });
 
       const collection = await prisma.collection.findFirst({
         where: { id, userId: req.user.id },
@@ -380,8 +426,17 @@ export const registerCollectionRoutes = (
         select: { id: true, name: true, email: true },
         take: 8,
       });
+      const sharedTeams = await prisma.collectionTeamShare.findMany({
+        where: { collectionId: id },
+        select: { teamId: true },
+      });
+      const teams = await searchTeamsForSharing({
+        prisma,
+        q,
+        excludeTeamIds: sharedTeams.map((share) => share.teamId),
+      });
 
-      return res.json({ users });
+      return res.json({ users, teams });
     }),
   );
 };
